@@ -14,9 +14,21 @@ class Intercom_dfc(Intercom_binaural):
     def init(self, args):
         Intercom_binaural.init(self, args)
         self.packet_format = f"!HBB{self.frames_per_chunk//8}B"
-        self.saved = [0]*self.cells_in_buffer #64 de tamaño
-        self.chunkmemory = [0]*self.cells_in_buffer
-        self.flow = self.number_of_channels*16 #numero de bitplanes a enviar
+        self.chunks_to_buffer = args.chunks_to_buffer
+        self.cells_in_buffer = self.chunks_to_buffer*2
+        self.paquetes = [self.generate_zero_chunk()]*self.cells_in_buffer #Numero de paquetes
+        #self.flow = self.number_of_channels*16 #numero de bitplanes a enviar
+        self.contador_chunk = 0 #Contador de chunk
+        self.chunk = 0  #Chunk actual         Servira para asignar el valor de chunk memory en el chunk a reproducir
+
+        #Necesitamos saber cuantos bitplanes enviamos, controlamos el chunk number actual y contador de chunk actual
+        #Tambien debemos controlar los bitplanes recibidos por chunk.
+
+        self.chunkmemory = [None]*self.cells_in_buffer
+        for i in range(self.cells_in_buffer):
+            self.chunkmemory[i] = 0
+        self.contador = -1
+        self.paquetesRecibidos=16
 
 
 
@@ -26,26 +38,31 @@ class Intercom_dfc(Intercom_binaural):
         self.record_and_send(indata)
         self._buffer[self.played_chunk_number % self.cells_in_buffer][:,0] += self._buffer[self.played_chunk_number % self.cells_in_buffer][:,1]
         
-        chunk = self._buffer[self.played_chunk_number % self.cells_in_buffer]
-        chunk[:, 0] += chunk[:, 1]
-        self.play(outdata , chunk)
+        #chunk = self._buffer[self.played_chunk_number % self.cells_in_buffer]
+        #chunk[:, 0] += chunk[:, 1]
+        self.play(outdata)
 
     def record_and_send(self, indata):
-        print("played chunk", self.played_chunk_number)
-       
-        if(self.saved[(self.played_chunk_number+1) % self.cells_in_buffer] >= 4 and self.saved[self.played_chunk_number % self.cells_in_buffer] < self.flow):
-            self.flow = self.saved[(self.played_chunk_number+1) % self.cells_in_buffer]
+        #print("played chunk", self.played_chunk_number)
+        #print(indata)
+        #Transformamos indata a signo magnitud
+        indata = self.tc2sm(indata)
+        #print(indata)
 
-        print("bitplane played: ", self.saved[(self.played_chunk_number+1) % self.cells_in_buffer], "flow: ", self.flow)
+        self.recorded_chunk_number = (self.recorded_chunk_number + 1) % self.MAX_CHUNK_NUMBER
+        self.contador = self.number_of_channels*16 -self.paquetesRecibidos-1
+        #if(self.saved[(self.played_chunk_number+1) % self.cells_in_buffer] >= 4 and self.saved[self.played_chunk_number % self.cells_in_buffer] < self.flow):
+           # self.flow = self.saved[(self.played_chunk_number+1) % self.cells_in_buffer]
 
-        self.saved[self.played_chunk_number % self.cells_in_buffer] = 0
-        self.chunkmemory[self.played_chunk_number%self.cells_in_buffer] = 0
+        if(self.contador < -1):
+            self.contador = -1
+
+        #print("bitplane played: ", self.saved[(self.played_chunk_number+1) % self.cells_in_buffer], "flow: ", self.flow)
+
         #self.saved[self.played_chunk_number] = self.played_chunk_number
         #print("Lista", *self.saved)
         for bitplane_number in range(self.number_of_channels*16-1, -1, -1):
             #print("bitplane number: ", bitplane_number, "flow : ", self.flow)
-            if(bitplane_number >= self.flow):
-                break
             #self.saved[self.played_chunk_number] = bitplane_number
             #print("Lista", *self.saved)
             #cabecera = [self.recorded_chunk_number][bitplane_number]
@@ -61,7 +78,6 @@ class Intercom_dfc(Intercom_binaural):
             #Enviamos el mensaje con su formato
             self.sending_sock.sendto(message, (self.destination_IP_addr, self.destination_port))
         #Cuando se han enviado todos los planos de bits, esta variable aumenta en 1 para hacer un seguimiento del contador de chunks enviados.
-        self.recorded_chunk_number = (self.recorded_chunk_number + 1) % self.MAX_CHUNK_NUMBER
 
 
     def receive_and_buffer(self):
@@ -77,28 +93,23 @@ class Intercom_dfc(Intercom_binaural):
         #Almacena en el chunk correspondiente el plano de bits, |= es un operador logico (OR) con el mismo funcionamiento que +=
         #necesario porque el buffer almacena los datos en un array bidimensional, si asignamos sin el operador el array que nos llega
         # del bitplane, sobreescribiriamos los valores de las columnas que no nos interesan tomar del array
-        
-        self.saved[chunk_number%self.cells_in_buffer] += 1
-        #if(self.chunkmemory[chunk_number%self.cells_in_buffer] == 1):
-         #   self.chunkmemory[chunk_number%self.cells_in_buffer] = 0
-        if(self.saved[chunk_number%self.cells_in_buffer] == self.flow and self.flow < 32 and self.chunkmemory[chunk_number%self.cells_in_buffer] == 0):
-            #print("+1")
-            self.chunkmemory[chunk_number%self.cells_in_buffer] = 1
-            self.flow += 1
-            #self.saved[chunk_number%self.cells_in_buffer] = 0
-        #print("El minimo actual es ", self.min)
+
+        #le asignamos a contador el valor que tiene chunkmemory en el chunk que reproduce
+        self.contador_chunk =self.chunkmemory[self.played_chunk_number % self.cells_in_buffer]
+        #actualizamos chunkmemory porque hemos recibido correctamente un chunk		
+        self.chunkmemory[self.played_chunk_number % self.cells_in_buffer] = (self.contador+1)     		    
         self._buffer[chunk_number % self.cells_in_buffer][:, bitplane_number%self.number_of_channels] |= (bitplane << bitplane_number//self.number_of_channels)
         #self.chunkmemory[chunk_number%self.cells_in_buffer] = chunk_number
         
-        print("Lista", *self.saved)
+        #print("Lista", *self.saved)
         return chunk_number
 
     def play(self, outdata):
         #print("play ", outdata)
         chunk = self._buffer[self.played_chunk_number % self.cells_in_buffer]
-        print("save: ", self.saved[(self.played_chunk_number+1) % self.cells_in_buffer])
-        if(self.saved[(self.played_chunk_number+1) % self.cells_in_buffer] == self.flow and self.flow < 32):
-            self.flow += 1
+        #print("save: ", self.saved[(self.played_chunk_number+1) % self.cells_in_buffer])
+        #if(self.saved[(self.played_chunk_number+1) % self.cells_in_buffer] == self.flow and self.flow < 32):
+            #self.flow += 1
         self._buffer[self.played_chunk_number % self.cells_in_buffer] = self.generate_zero_chunk()
         self.played_chunk_number = (self.played_chunk_number + 1) % self.cells_in_buffer
         chunk = self.sm2tc(chunk)
