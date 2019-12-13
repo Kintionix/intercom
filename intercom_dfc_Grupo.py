@@ -18,12 +18,11 @@ class Intercom_dfc(Intercom_binaural):
         self.cells_in_buffer = self.chunks_to_buffer*2
         self.paquetes = [self.generate_zero_chunk()]*self.cells_in_buffer #Numero de paquetes
         #self.flow = self.number_of_channels*16 #numero de bitplanes a enviar
-        self.contador_chunk = 0 #Contador de chunk
-        self.chunk = 0  #Chunk actual         Servira para asignar el valor de chunk memory en el chunk a reproducir
-
         #Necesitamos saber cuantos bitplanes enviamos, controlamos el chunk number actual y contador de chunk actual
         #Tambien debemos controlar los bitplanes recibidos por chunk.
 
+        self.contador_chunk = 0 #Contador de chunk
+        self.chunk = 0  #Chunk actual         Servira para asignar el valor de chunk memory en el chunk a reproducir
         self.chunkmemory = [None]*self.cells_in_buffer
         for i in range(self.cells_in_buffer):
             self.chunkmemory[i] = 0
@@ -44,7 +43,6 @@ class Intercom_dfc(Intercom_binaural):
 
     def record_and_send(self, indata):
         #print("played chunk", self.played_chunk_number)
-        #print(indata)
         #Transformamos indata a signo magnitud
         indata = self.tc2sm(indata)
         #print(indata)
